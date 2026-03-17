@@ -1,0 +1,1140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anglerfish - Deep Sea Survival</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        canvas {
+            border: 2px solid #0a2a3a;
+            border-radius: 8px;
+            cursor: none;
+        }
+        #ui-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            pointer-events: none;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #start-screen, #game-over-screen {
+            pointer-events: all;
+            text-align: center;
+            color: #7fdbff;
+            background: rgba(0, 10, 20, 0.92);
+            padding: 50px 60px;
+            border-radius: 20px;
+            border: 2px solid #1a4a5a;
+            box-shadow: 0 0 60px rgba(0, 150, 255, 0.15);
+        }
+        #game-over-screen { display: none; }
+        h1 {
+            font-size: 48px;
+            color: #ffdd44;
+            text-shadow: 0 0 30px rgba(255, 221, 68, 0.6);
+            margin-bottom: 10px;
+        }
+        h2 {
+            font-size: 32px;
+            color: #ff4444;
+            text-shadow: 0 0 20px rgba(255, 68, 68, 0.5);
+            margin-bottom: 15px;
+        }
+        .subtitle {
+            font-size: 18px;
+            color: #4a8a9a;
+            margin-bottom: 30px;
+        }
+        .instructions {
+            text-align: left;
+            font-size: 15px;
+            line-height: 2;
+            color: #6abacf;
+            margin-bottom: 30px;
+        }
+        .instructions span { color: #ffdd44; font-weight: bold; }
+        .btn {
+            background: linear-gradient(135deg, #0a3a5a, #1a5a7a);
+            color: #7fdbff;
+            border: 2px solid #2a7a9a;
+            padding: 15px 50px;
+            font-size: 20px;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        .btn:hover {
+            background: linear-gradient(135deg, #1a5a7a, #2a7a9a);
+            box-shadow: 0 0 30px rgba(0, 150, 255, 0.3);
+            transform: scale(1.05);
+        }
+        #final-score {
+            font-size: 42px;
+            color: #ffdd44;
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <div id="ui-overlay">
+        <div id="start-screen">
+            <h1>🐟 Anglerfish</h1>
+            <div class="subtitle">Deep Sea Survival</div>
+            <div class="instructions">
+                <span>WASD / Arrow Keys</span> — Swim around<br>
+                <span>SPACE / Click</span> — Toggle bioluminescent light<br>
+                <span>Light ON</span> — Reveals prey fish nearby 🐠<br>
+                <span>Light ON</span> — Also attracts predators! 🦈<br>
+                <span>Eat prey</span> — Gain points & energy<br>
+                <span>Avoid predators</span> — They drain your health!<br>
+            </div>
+            <button class="btn" id="start-btn">Dive In</button>
+        </div>
+        <div id="game-over-screen">
+            <h2>☠️ Consumed by the Deep</h2>
+            <div class="subtitle">Your anglerfish has perished...</div>
+            <div id="final-score">0</div>
+            <div class="subtitle">points</div>
+            <br>
+            <button class="btn" id="restart-btn">Try Again</button>
+        </div>
+    </div>
+
+    <script>
+    // ============ GAME SETUP ============
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width = 900;
+    const H = canvas.height = 600;
+
+    // ============ GAME STATE ============
+    let game = null;
+
+    const WORLD = { width: 3000, height: 2000 };
+    const PARTICLE_COUNT = 120;
+    const PREY_COUNT = 20;
+    const PREDATOR_BASE = 3;
+    const LIGHT_RADIUS = 180;
+    const LIGHT_ENERGY_DRAIN = 0.15;
+    const PREY_ENERGY_GAIN = 12;
+
+    // ============ UTILITY ============
+    function rand(min, max) { return Math.random() * (max - min) + min; }
+    function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function angle(a, b) { return Math.atan2(b.y - a.y, b.x - a.x); }
+
+    // ============ PARTICLES (ambient deep sea) ============
+    class Particle {
+        constructor() { this.reset(); }
+        reset() {
+            this.x = rand(0, WORLD.width);
+            this.y = rand(0, WORLD.height);
+            this.size = rand(1, 3);
+            this.alpha = rand(0.1, 0.4);
+            this.speed = rand(0.1, 0.5);
+            this.drift = rand(-0.3, 0.3);
+            this.pulse = rand(0, Math.PI * 2);
+            this.pulseSpeed = rand(0.01, 0.04);
+        }
+        update() {
+            this.y -= this.speed;
+            this.x += this.drift;
+            this.pulse += this.pulseSpeed;
+            if (this.y < -10) { this.y = WORLD.height + 10; this.x = rand(0, WORLD.width); }
+            if (this.x < -10) this.x = WORLD.width + 10;
+            if (this.x > WORLD.width + 10) this.x = -10;
+        }
+        draw(camX, camY) {
+            const sx = this.x - camX, sy = this.y - camY;
+            if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) return;
+            const a = this.alpha * (0.5 + 0.5 * Math.sin(this.pulse));
+            ctx.fillStyle = `rgba(100, 180, 255, ${a})`;
+            ctx.beginPath();
+            ctx.arc(sx, sy, this.size, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    // ============ ANGLERFISH (Player) ============
+    class Anglerfish {
+        constructor() {
+            this.x = WORLD.width / 2;
+            this.y = WORLD.height / 2;
+            this.vx = 0; this.vy = 0;
+            this.angle = 0;
+            this.targetAngle = 0;
+            this.speed = 2.8;
+            this.size = 28;
+            this.health = 100;
+            this.energy = 100;
+            this.lightOn = false;
+            this.lightRadius = 0;
+            this.lightFlicker = 0;
+            this.score = 0;
+            this.tailPhase = 0;
+            this.jawPhase = 0;
+            this.facingRight = true;
+            this.eatEffect = 0;
+            this.hurtEffect = 0;
+            this.lightPulse = 0;
+        }
+        update(keys) {
+            let mx = 0, my = 0;
+            if (keys['ArrowLeft'] || keys['KeyA']) mx -= 1;
+            if (keys['ArrowRight'] || keys['KeyD']) mx += 1;
+            if (keys['ArrowUp'] || keys['KeyW']) my -= 1;
+            if (keys['ArrowDown'] || keys['KeyS']) my += 1;
+
+            if (mx !== 0 || my !== 0) {
+                const len = Math.hypot(mx, my);
+                mx /= len; my /= len;
+                this.vx = lerp(this.vx, mx * this.speed, 0.12);
+                this.vy = lerp(this.vy, my * this.speed, 0.12);
+                this.targetAngle = Math.atan2(my, mx);
+                if (mx > 0) this.facingRight = true;
+                else if (mx < 0) this.facingRight = false;
+            } else {
+                this.vx *= 0.96;
+                this.vy *= 0.96;
+            }
+
+            this.x += this.vx;
+            this.y += this.vy;
+            this.x = clamp(this.x, 30, WORLD.width - 30);
+            this.y = clamp(this.y, 30, WORLD.height - 30);
+
+            this.angle = lerp(this.angle, this.facingRight ? 0 : Math.PI, 0.08);
+            this.tailPhase += 0.08 + Math.hypot(this.vx, this.vy) * 0.05;
+            this.jawPhase += 0.03;
+
+            // Light
+            if (this.lightOn) {
+                this.lightRadius = lerp(this.lightRadius, LIGHT_RADIUS, 0.08);
+                this.energy -= LIGHT_ENERGY_DRAIN;
+                this.lightPulse += 0.1;
+                if (this.energy <= 0) {
+                    this.energy = 0;
+                    this.lightOn = false;
+                }
+            } else {
+                this.lightRadius = lerp(this.lightRadius, 0, 0.12);
+                this.energy = Math.min(100, this.energy + 0.05);
+            }
+
+            this.lightFlicker = rand(-3, 3);
+            if (this.eatEffect > 0) this.eatEffect -= 0.04;
+            if (this.hurtEffect > 0) this.hurtEffect -= 0.03;
+        }
+        draw(camX, camY) {
+            const sx = this.x - camX;
+            const sy = this.y - camY;
+            const dir = this.facingRight ? 1 : -1;
+
+            ctx.save();
+            ctx.translate(sx, sy);
+
+            // Light glow
+            if (this.lightRadius > 2) {
+                const lr = this.lightRadius + this.lightFlicker + Math.sin(this.lightPulse) * 8;
+                const bobX = dir * 30;
+                const bobY = -22;
+
+                // Outer glow
+                const grad = ctx.createRadialGradient(bobX, bobY, 0, bobX, bobY, lr);
+                grad.addColorStop(0, 'rgba(180, 230, 255, 0.35)');
+                grad.addColorStop(0.3, 'rgba(100, 200, 255, 0.15)');
+                grad.addColorStop(0.6, 'rgba(50, 150, 220, 0.06)');
+                grad.addColorStop(1, 'rgba(0, 50, 100, 0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(bobX, bobY, lr, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Bright center
+                const grad2 = ctx.createRadialGradient(bobX, bobY, 0, bobX, bobY, 12);
+                grad2.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+                grad2.addColorStop(0.5, 'rgba(180, 230, 255, 0.6)');
+                grad2.addColorStop(1, 'rgba(100, 200, 255, 0)');
+                ctx.fillStyle = grad2;
+                ctx.beginPath();
+                ctx.arc(bobX, bobY, 12, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Hurt flash
+            if (this.hurtEffect > 0) {
+                ctx.globalAlpha = 0.3 + this.hurtEffect * 0.4;
+            }
+
+            // Body
+            ctx.fillStyle = '#1a3040';
+            ctx.strokeStyle = '#2a5a6a';
+            ctx.lineWidth = 2;
+
+            // Main body ellipse
+            ctx.beginPath();
+            ctx.ellipse(0, 0, this.size * 1.3, this.size, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            // Underbelly
+            ctx.fillStyle = '#0d2030';
+            ctx.beginPath();
+            ctx.ellipse(0, 5, this.size * 1.1, this.size * 0.6, 0, 0.1, Math.PI - 0.1);
+            ctx.fill();
+
+            // Tail
+            const tailWag = Math.sin(this.tailPhase) * 8;
+            ctx.fillStyle = '#1a3040';
+            ctx.strokeStyle = '#2a5a6a';
+            ctx.beginPath();
+            ctx.moveTo(-dir * 30, -5);
+            ctx.quadraticCurveTo(-dir * 45, tailWag, -dir * 55, -15 + tailWag);
+            ctx.lineTo(-dir * 50, tailWag * 0.5);
+            ctx.lineTo(-dir * 55, 15 + tailWag);
+            ctx.quadraticCurveTo(-dir * 45, tailWag, -dir * 30, 5);
+            ctx.fill();
+            ctx.stroke();
+
+            // Dorsal fin
+            ctx.fillStyle = '#15303f';
+            ctx.beginPath();
+            ctx.moveTo(-dir * 5, -this.size + 2);
+            ctx.quadraticCurveTo(dir * 5, -this.size - 15, dir * 18, -this.size + 5);
+            ctx.fill();
+
+            // Antenna (illicium)
+            const antennaBaseX = dir * 25;
+            const antennaBaseY = -15;
+            const antennaTipX = dir * 30;
+            const antennaTipY = -22;
+            const antennaMidX = dir * 20;
+            const antennaMidY = -30 + Math.sin(this.tailPhase * 0.7) * 3;
+
+            ctx.strokeStyle = this.lightOn ? '#5aafcf' : '#2a5a6a';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(antennaBaseX, antennaBaseY);
+            ctx.quadraticCurveTo(antennaMidX, antennaMidY, antennaTipX, antennaTipY);
+            ctx.stroke();
+
+            // Esca (light bulb)
+            if (this.lightOn) {
+                ctx.fillStyle = '#aaeeff';
+                ctx.shadowColor = '#88ddff';
+                ctx.shadowBlur = 15;
+            } else {
+                ctx.fillStyle = '#3a6a7a';
+                ctx.shadowBlur = 0;
+            }
+            ctx.beginPath();
+            ctx.arc(antennaTipX, antennaTipY, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // Eye
+            const eyeX = dir * 20;
+            const eyeY = -5;
+            ctx.fillStyle = '#112020';
+            ctx.beginPath();
+            ctx.arc(eyeX, eyeY, 6, 0, Math.PI * 2);
+            ctx.fill();
+            // Iris
+            ctx.fillStyle = this.lightOn ? '#44ccaa' : '#226655';
+            ctx.beginPath();
+            ctx.arc(eyeX + dir * 1.5, eyeY, 4, 0, Math.PI * 2);
+            ctx.fill();
+            // Pupil
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(eyeX + dir * 2, eyeY, 2.2, 0, Math.PI * 2);
+            ctx.fill();
+            // Eye shine
+            ctx.fillStyle = 'rgba(255,255,255,0.4)';
+            ctx.beginPath();
+            ctx.arc(eyeX + dir * 3, eyeY - 2, 1.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Mouth / jaw
+            const jawOpen = 2 + Math.sin(this.jawPhase) * 1.5 + (this.eatEffect > 0 ? 5 : 0);
+            ctx.strokeStyle = '#2a5a6a';
+            ctx.lineWidth = 2;
+            // Upper jaw
+            ctx.beginPath();
+            ctx.moveTo(dir * 18, 3);
+            ctx.lineTo(dir * 36, -1);
+            ctx.lineTo(dir * 30, 3 + jawOpen * 0.3);
+            ctx.stroke();
+            // Lower jaw
+            ctx.beginPath();
+            ctx.moveTo(dir * 18, 7);
+            ctx.lineTo(dir * 34, 3 + jawOpen);
+            ctx.lineTo(dir * 28, 6 + jawOpen * 0.5);
+            ctx.stroke();
+            // Teeth
+            ctx.fillStyle = '#8abaca';
+            for (let i = 0; i < 4; i++) {
+                const tx = dir * (20 + i * 4);
+                ctx.beginPath();
+                ctx.moveTo(tx, 2);
+                ctx.lineTo(tx + dir * 1.5, 5 + jawOpen * 0.2);
+                ctx.lineTo(tx - dir * 1.5, 2);
+                ctx.fill();
+            }
+
+            // Pectoral fin
+            const finWag = Math.sin(this.tailPhase * 1.3 + 1) * 10;
+            ctx.fillStyle = 'rgba(20, 50, 60, 0.7)';
+            ctx.beginPath();
+            ctx.moveTo(-dir * 5, 10);
+            ctx.quadraticCurveTo(-dir * 15, 25 + finWag, -dir * 5, 20 + finWag);
+            ctx.fill();
+
+            // Eat effect
+            if (this.eatEffect > 0) {
+                ctx.strokeStyle = `rgba(100, 255, 200, ${this.eatEffect})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(0, 0, this.size * 1.5 * (1 + (1 - this.eatEffect) * 0.5), 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+    }
+
+    // ============ PREY FISH ============
+    class Prey {
+        constructor() { this.reset(true); }
+        reset(initial = false) {
+            if (initial) {
+                this.x = rand(50, WORLD.width - 50);
+                this.y = rand(50, WORLD.height - 50);
+            } else {
+                // Spawn at world edges
+                const side = Math.floor(rand(0, 4));
+                if (side === 0) { this.x = rand(50, WORLD.width - 50); this.y = -30; }
+                else if (side === 1) { this.x = rand(50, WORLD.width - 50); this.y = WORLD.height + 30; }
+                else if (side === 2) { this.x = -30; this.y = rand(50, WORLD.height - 50); }
+                else { this.x = WORLD.width + 30; this.y = rand(50, WORLD.height - 50); }
+            }
+            this.size = rand(6, 12);
+            this.speed = rand(0.5, 1.5);
+            this.angle = rand(0, Math.PI * 2);
+            this.turnTimer = rand(50, 150);
+            this.phase = rand(0, Math.PI * 2);
+            this.alive = true;
+            const colors = ['#ff8844', '#ffaa33', '#44ddaa', '#77bbff', '#ffcc55', '#ff6688', '#88ffaa'];
+            this.color = colors[Math.floor(rand(0, colors.length))];
+            this.scared = false;
+            this.scareTimer = 0;
+            this.attracted = false;
+        }
+        update(player) {
+            this.phase += 0.06;
+
+            const distToPlayer = dist(this, player);
+
+            // Attracted to light
+            if (player.lightOn && distToPlayer < player.lightRadius * 2.5 && distToPlayer > 40) {
+                this.attracted = true;
+                const a = angle(this, player);
+                this.angle = lerp(this.angle, a, 0.03);
+                this.speed = lerp(this.speed, 1.8, 0.02);
+            } else {
+                this.attracted = false;
+                this.turnTimer--;
+                if (this.turnTimer <= 0) {
+                    this.angle += rand(-0.8, 0.8);
+                    this.turnTimer = rand(60, 200);
+                    this.speed = rand(0.5, 1.5);
+                }
+            }
+
+            // Flee if very close but not eaten
+            if (distToPlayer < 60 && distToPlayer > 25) {
+                this.scared = true;
+                this.scareTimer = 40;
+                const a = angle(player, this);
+                this.angle = lerp(this.angle, a, 0.15);
+                this.speed = 3;
+            }
+
+            if (this.scareTimer > 0) {
+                this.scareTimer--;
+                if (this.scareTimer <= 0) this.scared = false;
+            }
+
+            this.x += Math.cos(this.angle) * this.speed;
+            this.y += Math.sin(this.angle) * this.speed + Math.sin(this.phase) * 0.3;
+
+            // Wrap around world
+            if (this.x < -50) this.x = WORLD.width + 40;
+            if (this.x > WORLD.width + 50) this.x = -40;
+            if (this.y < -50) this.y = WORLD.height + 40;
+            if (this.y > WORLD.height + 50) this.y = -40;
+        }
+        draw(camX, camY, player) {
+            const sx = this.x - camX, sy = this.y - camY;
+            if (sx < -50 || sx > W + 50 || sy < -50 || sy > H + 50) return;
+
+            const distToPlayer = dist(this, player);
+            const inLight = player.lightOn && distToPlayer < player.lightRadius + 20;
+            const nearDarkness = !player.lightOn && distToPlayer < 50;
+
+            // Only visible if in light or very close
+            let alpha = 0;
+            if (inLight) {
+                alpha = clamp(1 - distToPlayer / (player.lightRadius + 20), 0.1, 1);
+            } else if (nearDarkness) {
+                alpha = clamp(1 - distToPlayer / 50, 0, 0.25);
+            }
+            if (alpha < 0.02) return;
+
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.translate(sx, sy);
+
+            const dir = Math.cos(this.angle) >= 0 ? 1 : -1;
+
+            // Body
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, this.size, this.size * 0.6, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Tail
+            ctx.beginPath();
+            const tw = Math.sin(this.phase * 2) * 3;
+            ctx.moveTo(-dir * this.size * 0.7, 0);
+            ctx.lineTo(-dir * (this.size * 1.4), -this.size * 0.5 + tw);
+            ctx.lineTo(-dir * (this.size * 1.4), this.size * 0.5 + tw);
+            ctx.closePath();
+            ctx.fill();
+
+            // Eye
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(dir * this.size * 0.4, -this.size * 0.15, this.size * 0.2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#111';
+            ctx.beginPath();
+            ctx.arc(dir * (this.size * 0.45), -this.size * 0.15, this.size * 0.1, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+    }
+
+    // ============ PREDATOR ============
+    class Predator {
+        constructor(targetPlayer) {
+            this.player = targetPlayer;
+            this.reset();
+        }
+        reset() {
+            const side = Math.floor(rand(0, 4));
+            if (side === 0) { this.x = rand(0, WORLD.width); this.y = -60; }
+            else if (side === 1) { this.x = rand(0, WORLD.width); this.y = WORLD.height + 60; }
+            else if (side === 2) { this.x = -60; this.y = rand(0, WORLD.height); }
+            else { this.x = WORLD.width + 60; this.y = rand(0, WORLD.height); }
+            this.size = rand(40, 60);
+            this.speed = rand(1.2, 2.2);
+            this.angle = rand(0, Math.PI * 2);
+            this.phase = rand(0, Math.PI * 2);
+            this.active = false;
+            this.alertLevel = 0;
+            this.patrolAngle = rand(0, Math.PI * 2);
+            this.patrolTimer = rand(80, 200);
+            this.jawPhase = 0;
+            this.eyeGlow = 0;
+            this.type = Math.floor(rand(0, 3));
+            const types = [
+                { color: '#4a1a2a', eyeColor: '#ff3333', name: 'viperfish' },
+                { color: '#2a2a1a', eyeColor: '#ffaa00', name: 'gulper' },
+                { color: '#1a2a3a', eyeColor: '#ff4466', name: 'dragonfish' }
+            ];
+            this.info = types[this.type];
+        }
+        update() {
+            this.phase += 0.04;
+            this.jawPhase += 0.02;
+
+            const distToPlayer = dist(this, this.player);
+
+            // Attracted when light is on
+            if (this.player.lightOn) {
+                this.alertLevel = Math.min(1, this.alertLevel + 0.008);
+            } else {
+                this.alertLevel = Math.max(0, this.alertLevel - 0.003);
+            }
+
+            if (this.alertLevel > 0.3 && distToPlayer < 600) {
+                this.active = true;
+            }
+
+            if (this.active) {
+                const targetAngle = angle(this, this.player);
+                this.angle = lerp(this.angle, targetAngle, 0.04 + this.alertLevel * 0.03);
+                const chaseSpeed = this.speed * (0.8 + this.alertLevel * 0.8);
+                this.x += Math.cos(this.angle) * chaseSpeed;
+                this.y += Math.sin(this.angle) * chaseSpeed;
+                this.eyeGlow = lerp(this.eyeGlow, 1, 0.05);
+
+                if (!this.player.lightOn && distToPlayer > 350) {
+                    this.active = false;
+                    this.alertLevel = Math.max(0.1, this.alertLevel - 0.01);
+                }
+            } else {
+                this.eyeGlow = lerp(this.eyeGlow, 0.2, 0.02);
+                this.patrolTimer--;
+                if (this.patrolTimer <= 0) {
+                    this.patrolAngle += rand(-1, 1);
+                    this.patrolTimer = rand(80, 200);
+                }
+                this.angle = lerp(this.angle, this.patrolAngle, 0.02);
+                this.x += Math.cos(this.angle) * this.speed * 0.4;
+                this.y += Math.sin(this.angle) * this.speed * 0.4;
+
+                if (this.x < -100 || this.x > WORLD.width + 100 || this.y < -100 || this.y > WORLD.height + 100) {
+                    this.patrolAngle = angle(this, { x: WORLD.width / 2, y: WORLD.height / 2 });
+                }
+            }
+
+            this.x = clamp(this.x, -80, WORLD.width + 80);
+            this.y = clamp(this.y, -80, WORLD.height + 80);
+        }
+        draw(camX, camY, player) {
+            const sx = this.x - camX, sy = this.y - camY;
+            if (sx < -100 || sx > W + 100 || sy < -100 || sy > H + 100) return;
+
+            const distToPlayer = dist(this, player);
+            const inLight = player.lightOn && distToPlayer < player.lightRadius + 40;
+            const nearPlayer = distToPlayer < 120;
+
+            let alpha = 0;
+            if (inLight) {
+                alpha = clamp(1 - distToPlayer / (player.lightRadius + 60), 0.2, 1);
+            } else if (nearPlayer) {
+                alpha = clamp(1 - distToPlayer / 120, 0, 0.4);
+            }
+
+            const showEyes = this.active && distToPlayer < 400;
+
+            if (alpha < 0.02 && !showEyes) return;
+
+            ctx.save();
+            ctx.translate(sx, sy);
+
+            const dir = Math.cos(this.angle) >= 0 ? 1 : -1;
+
+            // Eye glow (visible even in dark when hunting)
+            if (showEyes && this.eyeGlow > 0.1) {
+                const eyeA = Math.min(0.8, this.eyeGlow * (1 - distToPlayer / 400));
+                ctx.fillStyle = this.info.eyeColor;
+                ctx.globalAlpha = eyeA * 0.3;
+                ctx.beginPath();
+                ctx.arc(dir * this.size * 0.5, -this.size * 0.15, 8 + this.eyeGlow * 4, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            if (alpha >= 0.02) {
+                ctx.globalAlpha = alpha;
+
+                // Body
+                ctx.fillStyle = this.info.color;
+                ctx.strokeStyle = `rgba(100, 60, 60, ${alpha})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.ellipse(0, 0, this.size, this.size * 0.5, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                // Jagged dorsal
+                ctx.fillStyle = this.info.color;
+                for (let i = -3; i < 4; i++) {
+                    ctx.beginPath();
+                    ctx.moveTo(i * this.size * 0.2, -this.size * 0.45);
+                    ctx.lineTo(i * this.size * 0.2 + 4, -this.size * 0.7 - Math.abs(i) * 2);
+                    ctx.lineTo(i * this.size * 0.2 + 8, -this.size * 0.45);
+                    ctx.fill();
+                }
+
+                // Tail
+                const tw = Math.sin(this.phase * 2) * 6;
+                ctx.beginPath();
+                ctx.moveTo(-dir * this.size * 0.8, 0);
+                ctx.lineTo(-dir * (this.size * 1.5), -this.size * 0.4 + tw);
+                ctx.lineTo(-dir * (this.size * 1.3), tw * 0.5);
+                ctx.lineTo(-dir * (this.size * 1.5), this.size * 0.4 + tw);
+                ctx.closePath();
+                ctx.fill();
+
+                // Mouth
+                const jawOpen = 3 + Math.sin(this.jawPhase) * 2 + (distToPlayer < 80 ? 8 : 0);
+                ctx.strokeStyle = `rgba(150, 50, 50, ${alpha})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(dir * this.size * 0.5, -3);
+                ctx.lineTo(dir * (this.size * 0.9), -jawOpen);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(dir * this.size * 0.5, 3);
+                ctx.lineTo(dir * (this.size * 0.9), jawOpen);
+                ctx.stroke();
+
+                // Teeth
+                ctx.fillStyle = `rgba(200, 180, 180, ${alpha})`;
+                for (let i = 0; i < 5; i++) {
+                    const tx = dir * (this.size * 0.5 + i * 8);
+                    ctx.beginPath();
+                    ctx.moveTo(tx, -2);
+                    ctx.lineTo(tx + dir * 2, 4);
+                    ctx.lineTo(tx - dir * 2, -2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.moveTo(tx, 2);
+                    ctx.lineTo(tx + dir * 2, -4);
+                    ctx.lineTo(tx - dir * 2, 2);
+                    ctx.fill();
+                }
+
+                // Eyes
+                ctx.fillStyle = this.info.eyeColor;
+                ctx.shadowColor = this.info.eyeColor;
+                ctx.shadowBlur = this.eyeGlow * 10;
+                ctx.beginPath();
+                ctx.arc(dir * this.size * 0.5, -this.size * 0.15, 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#000';
+                ctx.shadowBlur = 0;
+                ctx.beginPath();
+                ctx.arc(dir * (this.size * 0.52), -this.size * 0.15, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
+    }
+
+    // ============ BUBBLES ============
+    class Bubble {
+        constructor(x, y, color) {
+            this.x = x; this.y = y;
+            this.vx = rand(-2, 2);
+            this.vy = rand(-3, -1);
+            this.size = rand(2, 6);
+            this.life = 1;
+            this.color = color;
+        }
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.vy -= 0.02;
+            this.life -= 0.02;
+        }
+        draw(camX, camY) {
+            if (this.life <= 0) return;
+            const sx = this.x - camX, sy = this.y - camY;
+            ctx.globalAlpha = this.life * 0.6;
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(sx, sy, this.size, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+        }
+    }
+
+    // ============ JELLYFISH (ambient decoration) ============
+    class Jellyfish {
+        constructor() {
+            this.x = rand(0, WORLD.width);
+            this.y = rand(0, WORLD.height);
+            this.size = rand(8, 18);
+            this.phase = rand(0, Math.PI * 2);
+            this.pulseSpeed = rand(0.02, 0.05);
+            this.driftX = rand(-0.2, 0.2);
+            this.driftY = rand(-0.4, -0.1);
+            this.hue = rand(200, 300);
+            this.glow = rand(0.1, 0.3);
+        }
+        update() {
+            this.phase += this.pulseSpeed;
+            this.x += this.driftX + Math.sin(this.phase * 0.3) * 0.2;
+            this.y += this.driftY + Math.sin(this.phase) * 0.3;
+            if (this.y < -50) { this.y = WORLD.height + 40; this.x = rand(0, WORLD.width); }
+            if (this.x < -50) this.x = WORLD.width + 40;
+            if (this.x > WORLD.width + 50) this.x = -40;
+        }
+        draw(camX, camY, player) {
+            const sx = this.x - camX, sy = this.y - camY;
+            if (sx < -50 || sx > W + 50 || sy < -50 || sy > H + 50) return;
+
+            const distToPlayer = dist(this, player);
+            // Self-bioluminescent — faintly visible always, brighter in player light
+            let alpha = 0.08 + Math.sin(this.phase) * 0.03;
+            if (player.lightOn && distToPlayer < player.lightRadius + 30) {
+                alpha = clamp(0.6 - distToPlayer / (player.lightRadius + 30) * 0.4, alpha, 0.7);
+            }
+
+            const pulse = 0.7 + Math.sin(this.phase) * 0.3;
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.translate(sx, sy);
+
+            // Glow
+            const glowGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, this.size * 2);
+            glowGrad.addColorStop(0, `hsla(${this.hue}, 80%, 70%, ${this.glow})`);
+            glowGrad.addColorStop(1, 'transparent');
+            ctx.fillStyle = glowGrad;
+            ctx.beginPath();
+            ctx.arc(0, 0, this.size * 2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Bell
+            ctx.fillStyle = `hsla(${this.hue}, 60%, 50%, 0.5)`;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, this.size * pulse, this.size * 0.7 * pulse, 0, Math, Math.PI * 2);
+            ctx.fill();
+
+            // Tentacles
+            ctx.strokeStyle = `hsla(${this.hue}, 70%, 60%, 0.3)`;
+            ctx.lineWidth = 1;
+            for (let i = -2; i <= 2; i++) {
+                ctx.beginPath();
+                const tx = i * this.size * 0.3;
+                ctx.moveTo(tx, this.size * 0.5);
+                ctx.quadraticCurveTo(tx + Math.sin(this.phase + i) * 5, this.size * 1.5, tx + Math.sin(this.phase * 0.7 + i) * 8, this.size * 2.5);
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+    }
+
+    // ============ MAIN GAME ============
+    function initGame() {
+        game = {
+            player: new Anglerfish(),
+            particles: Array.from({ length: PARTICLE_COUNT }, () => new Particle()),
+            prey: Array.from({ length: PREY_COUNT }, () => new Prey()),
+            predators: [],
+            bubbles: [],
+            jellyfish: Array.from({ length: 12 }, () => new Jellyfish()),
+            keys: {},
+            camX: 0, camY: 0,
+            time: 0,
+            difficulty: 1,
+            running: true,
+            scoreDisplay: 0,
+            combo: 0,
+            comboTimer: 0,
+            depthWobble: 0,
+        };
+
+        for (let i = 0; i < PREDATOR_BASE; i++) {
+            game.predators.push(new Predator(game.player));
+        }
+    }
+
+    // ============ INPUT ============
+    document.addEventListener('keydown', e => {
+        if (!game) return;
+        game.keys[e.code] = true;
+        if (e.code === 'Space') {
+            e.preventDefault();
+            game.player.lightOn = !game.player.lightOn;
+        }
+    });
+    document.addEventListener('keyup', e => {
+        if (!game) return;
+        game.keys[e.code] = false;
+    });
+    canvas.addEventListener('mousedown', () => {
+        if (!game) return;
+        game.player.lightOn = !game.player.lightOn;
+    });
+
+    // ============ GAME LOOP ============
+    function update() {
+        if (!game || !game.running) return;
+
+        game.time++;
+        game.depthWobble += 0.01;
+
+        game.difficulty = 1 + game.player.score * 0.002;
+
+        const targetPredators = Math.min(8, PREDATOR_BASE + Math.floor(game.player.score / 80));
+        while (game.predators.length < targetPredators) {
+            game.predators.push(new Predator(game.player));
+        }
+
+        game.player.update(game.keys);
+        game.particles.forEach(p => p.update());
+        game.prey.forEach(p => p.update(game.player));
+        game.predators.forEach(p => p.update());
+        game.jellyfish.forEach(j => j.update());
+
+        // Camera
+        const targetCamX = game.player.x - W / 2;
+        const targetCamY = game.player.y - H / 2;
+        game.camX = lerp(game.camX, targetCamX, 0.08);
+        game.camY = lerp(game.camY, targetCamY, 0.08);
+        game.camX = clamp(game.camX, 0, WORLD.width - W);
+        game.camY = clamp(game.camY, 0, WORLD.height - H);
+
+        // Eat prey
+        game.prey.forEach(p => {
+            if (!p.alive) return;
+            if (dist(p, game.player) < game.player.size + p.size) {
+                p.alive = false;
+                game.player.eatEffect = 1;
+                game.player.energy = Math.min(100, game.player.energy + PREY_ENERGY_GAIN);
+                game.player.health = Math.min(100, game.player.health + 3);
+
+                game.combo++;
+                game.comboTimer = 180;
+                const points = Math.floor(10 * (1 + game.combo * 0.5));
+                game.player.score += points;
+
+                for (let i = 0; i < 8; i++) {
+                    game.bubbles.push(new Bubble(p.x, p.y, '#44ffaa'));
+                }
+
+                setTimeout(() => { p.reset(false); p.alive = true; }, rand(2000, 5000));
+            }
+        });
+
+        if (game.comboTimer > 0) {
+            game.comboTimer--;
+            if (game.comboTimer <= 0) game.combo = 0;
+        }
+
+        // Predator collision
+        game.predators.forEach(p => {
+            if (dist(p, game.player) < p.size * 0.6 + game.player.size * 0.5) {
+                game.player.health -= 0.6 * game.difficulty;
+                game.player.hurtEffect = 1;
+                const a = angle(p, game.player);
+                game.player.vx += Math.cos(a) * 2;
+                game.player.vy += Math.sin(a) * 2;
+
+                if (game.time % 10 === 0) {
+                    game.bubbles.push(new Bubble(game.player.x, game.player.y, '#ff4444'));
+                }
+            }
+        });
+
+        game.bubbles = game.bubbles.filter(b => {
+            b.update();
+            return b.life > 0;
+        });
+
+        game.scoreDisplay = lerp(game.scoreDisplay, game.player.score, 0.1);
+
+        if (game.player.health <= 0) {
+            game.player.health = 0;
+            game.running = false;
+            document.getElementById('final-score').textContent = game.player.score;
+            document.getElementById('game-over-screen').style.display = 'block';
+        }
+    }
+
+    function draw() {
+        // Deep sea background
+        const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
+        bgGrad.addColorStop(0, '#020810');
+        bgGrad.addColorStop(0.5, '#030c14');
+        bgGrad.addColorStop(1, '#010608');
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, W, H);
+
+        if (!game) return;
+
+        // Depth caustics
+        ctx.globalAlpha = 0.02;
+        for (let i = 0; i < 5; i++) {
+            const cx = W / 2 + Math.sin(game.depthWobble + i) * 200;
+            const cy = H / 2 + Math.cos(game.depthWobble * 0.7 + i * 2) * 150;
+            const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 300);
+            grad.addColorStop(0, '#0a3050');
+            grad.addColorStop(1, 'transparent');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, W, H);
+        }
+        ctx.globalAlpha = 1;
+
+        // Particles
+        game.particles.forEach(p => p.draw(game.camX, game.camY));
+
+        // Jellyfish (behind prey/player)
+        game.jellyfish.forEach(j => j.draw(game.camX, game.camY, game.player));
+
+        // Prey
+        game.prey.forEach(p => {
+            if (p.alive) p.draw(game.camX, game.camY, game.player);
+        });
+
+        // Player
+        game.player.draw(game.camX, game.camY);
+
+        // Predators
+        game.predators.forEach(p => p.draw(game.camX, game.camY, game.player));
+
+        // Bubbles
+        game.bubbles.forEach(b => b.draw(game.camX, game.camY));
+
+        // Vignette
+        const vignette = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.9);
+        vignette.addColorStop(0, 'rgba(0,0,0,0)');
+        vignette.addColorStop(1, 'rgba(0,0,0,0.7)');
+        ctx.fillStyle = vignette;
+        ctx.fillRect(0, 0, W, H);
+
+        // ============ HUD ============
+        const hudY = 20;
+
+        // Health bar
+        ctx.fillStyle = 'rgba(0, 10, 20, 0.7)';
+        ctx.fillRect(20, hudY, 200, 18);
+        const healthPct = game.player.health / 100;
+        const healthColor = healthPct > 0.5 ? '#44cc88' : healthPct > 0.25 ? '#ccaa44' : '#cc4444';
+        ctx.fillStyle = healthColor;
+        ctx.fillRect(22, hudY + 2, 196 * healthPct, 14);
+        ctx.strokeStyle = '#2a5a6a';
+        ctx.strokeRect(20, hudY, 200, 18);
+        ctx.fillStyle = '#aaddee';
+        ctx.font = '11px monospace';
+        ctx.fillText('HEALTH', 85, hudY + 13);
+
+        // Energy bar
+        ctx.fillStyle = 'rgba(0, 10, 20, 0.7)';
+        ctx.fillRect(20, hudY + 24, 200, 18);
+        const energyPct = game.player.energy / 100;
+        ctx.fillStyle = game.player.lightOn ? '#44aaff' : '#2266aa';
+        ctx.fillRect(22, hudY + 26, 196 * energyPct, 14);
+        ctx.strokeStyle = '#2a5a6a';
+        ctx.strokeRect(20, hudY + 24, 200, 18);
+        ctx.fillStyle = '#aaddee';
+        ctx.fillText('ENERGY', 85, hudY + 37);
+
+        // Score
+        ctx.fillStyle = '#ffdd44';
+        ctx.font = 'bold 24px monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(Math.floor(game.scoreDisplay), W - 30, hudY + 20);
+        ctx.fillStyle = '#6a8a9a';
+        ctx.font = '12px monospace';
+        ctx.fillText('SCORE', W - 30, hudY + 36);
+        ctx.textAlign = 'left';
+
+        // Combo
+        if (game.combo > 1) {
+            ctx.fillStyle = `rgba(100, 255, 200, ${Math.min(1, game.comboTimer / 60)})`;
+            ctx.font = 'bold 18px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(`COMBO x${game.combo}`, W / 2, hudY + 20);
+            ctx.textAlign = 'left';
+        }
+
+        // Light indicator
+        const lightText = game.player.lightOn ? '💡 LIGHT ON' : '🌑 LIGHT OFF';
+        ctx.fillStyle = game.player.lightOn ? '#88eeff' : '#334455';
+        ctx.font = '14px monospace';
+        ctx.fillText(lightText, 20, H - 20);
+
+        // Depth
+        const depth = Math.floor(800 + game.player.y * 0.5);
+        ctx.fillStyle = '#3a5a6a';
+        ctx.font = '12px monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(`Depth: ${depth}m`, W - 20, H - 20);
+        ctx.textAlign = 'left';
+
+        // Predator warning
+        const nearestPred = game.predators.reduce((min, p) => {
+            const d = dist(p, game.player);
+            return d < min ? d : min;
+        }, Infinity);
+        if (nearestPred < 200 && game.predators.some(p => p.active)) {
+            const warn = Math.sin(game.time * 0.15) * 0.5 + 0.5;
+            ctx.fillStyle = `rgba(255, 50, 50, ${warn * 0.15})`;
+            ctx.fillRect(0, 0, W, H);
+            ctx.fillStyle = `rgba(255, 80, 80, ${warn})`;
+            ctx.font = 'bold 16px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('⚠ PREDATOR NEARBY ⚠', W / 2, H - 20);
+            ctx.textAlign = 'left';
+        }
+
+        // Minimap
+        const mmW = 140, mmH = 90;
+        const mmX = W - mmW - 15, mmY = H - mmH - 15;
+        ctx.fillStyle = 'rgba(0, 15, 25, 0.7)';
+        ctx.fillRect(mmX, mmY, mmW, mmH);
+        ctx.strokeStyle = '#1a3a4a';
+        ctx.strokeRect(mmX, mmY, mmW, mmH);
+
+        game.prey.forEach(p => {
+            if (!p.alive) return;
+            ctx.fillStyle = 'rgba(100, 255, 150, 0.6)';
+            ctx.fillRect(mmX + (p.x / WORLD.width) * mmW, mmY + (p.y / WORLD.height) * mmH, 2, 2);
+        });
+
+        game.predators.forEach(p => {
+            ctx.fillStyle = p.active ? 'rgba(255, 50, 50, 0.8)' : 'rgba(255, 50, 50, 0.3)';
+            ctx.fillRect(mmX + (p.x / WORLD.width) * mmW - 1, mmY + (p.y / WORLD.height) * mmH - 1, 3, 3);
+        });
+
+        ctx.fillStyle = '#44ddff';
+        const pmx = mmX + (game.player.x / WORLD.width) * mmW;
+        const pmy = mmY + (game.player.y / WORLD.height) * mmH;
+        ctx.beginPath();
+        ctx.arc(pmx, pmy, 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (game.player.lightOn) {
+            ctx.strokeStyle = 'rgba(100, 200, 255, 0.3)';
+            ctx.beginPath();
+            ctx.arc(pmx, pmy, (game.player.lightRadius / WORLD.width) * mmW * 2, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+    }
+
+    function gameLoop() {
+        update();
+        draw();
+        requestAnimationFrame(gameLoop);
+    }
+
+    // ============ UI ============
+    document.getElementById('start-btn').addEventListener('click', () => {
+        document.getElementById('start-screen').style.display = 'none';
+        initGame();
+    });
+
+    document.getElementById('restart-btn').addEventListener('click', () => {
+        document.getElementById('game-over-screen').style.display = 'none';
+        initGame();
+    });
+
+    gameLoop();
+    </script>
+</body>
+</html>
